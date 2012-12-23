@@ -45,7 +45,11 @@
 (defrecord Local
   [path]
   Repository
-  (commits [r] (commits r ""))
+  (commits [r]
+    (let [refs (concat (branches r) (tags r))]
+      commits (vec
+                (distinct
+                  (mapcat (comp (partial commits r) :label) refs)))))
   (commits [r sha]
     (try
       (s/split-lines
@@ -99,7 +103,7 @@
         (assert (= (git-cmd r (str "cat-file -t " sha)) "tree\n"))
         (let
           [fs (s/split-lines (git-cmd r (str "cat-file -p " sha)))]
-          (mapv #(-> (zipmap [:mode :type :sha :path] (words %))
+          (mapv #(-> (zipmap [:mode :type :sha :filename] (words %))
                    (update-in [:type] keyword)
                    (update-in [:mode] keyword)) fs)))
       (catch java.lang.AssertionError e nil)))
@@ -117,3 +121,6 @@
         ^String uri (:uri origin)
         name (subs uri (inc (.lastIndexOf uri "/")))]
     {:uri uri :name name}))
+
+(tags (->Local "/Users/dcb/src/clojure"))
+(branches (->Local "/Users/dcb/src/clojure"))

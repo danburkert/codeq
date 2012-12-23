@@ -49,12 +49,12 @@
 
 (defn- tree? [tree]
   "check that a tree map is valid"
-  (and (contains? tree :path)
+  (and (contains? tree :filename)
        (contains? tree :sha)
        (contains? tree :type)
        (sha? (:sha tree))
        (#{:tree :blob} (:type tree))
-       (string? (:path tree))))
+       (string? (:filename tree))))
 
 (defn- remote? [remote]
   "check that a remote map is valid"
