@@ -372,7 +372,7 @@
 
 (defn unimported-commits
   "Returns the commit map of all unimported commits in the repository.
-  Finds all commits that are reachable from a branch or tag."
+   Finds all commits that are reachable from a branch or tag."
   [db repo]
   (let [imported (set (map first (d/q '[:find ?sha
                                         :where
@@ -423,10 +423,10 @@
 (defn deleted-refs
   "Returns refs that have been deleted from the repo since the last import
 
-  TODO: consider refactoring this to use some sort of set-with.  If you could
-  specify the comparator for the set, then you could have all of the keys in
-  each ref map, but only compare based on :type and :label.  Then you could
-  have the entity/id in the map, and it wouldn't need to be looked up again."
+   TODO: consider refactoring this to use some sort of set-with.  If you could
+   specify the comparator for the set, then you could have all of the keys in
+   each ref map, but only compare based on :type and :label.  Then you could
+   have the entity/id in the map, and it wouldn't need to be looked up again."
   [db repo]
   (let [imported-refs (set (qmap '[:find ?type ?label
                                    :where
@@ -471,9 +471,9 @@
                                   db label type))
                      (d/tempid :db.part/user))
           entity-tx {:db/id ref-id
-                      :ref/commit commit-id
-                      :ref/label label
-                      :git/type type}
+                     :ref/commit commit-id
+                     :ref/label label
+                     :git/type type}
           reference-tx {:db/id (repo-id db repo) :repo/refs ref-id}]
       (if (tempid? ref-id)
         [entity-tx reference-tx]
@@ -502,13 +502,13 @@
     (doseq [ref unimported]
       (println "Importing" (name (:type ref)) (:label ref))
       (->> ref
-        (ref-tx-data db repo)
-        (d/transact conn)))
+           (ref-tx-data db repo)
+           (d/transact conn)))
     (doseq [ref deleted]
       (println "Deleting" (name (:type ref)) (:label ref))
       (->> ref
-        (ref-retract-data db repo)
-        (d/transact conn)))))
+           (ref-retract-data db repo)
+           (d/transact conn)))))
 
 (defn import-git
   [conn repo]
