@@ -38,3 +38,9 @@
        ~g)))
 
 (def tempid? map?)
+
+(defn qmap
+  "Returns the results of a query in map form with specified keys"
+  [query keys db & args]
+  (->> (apply d/q query db args)
+    (mapv (partial zipmap keys))))

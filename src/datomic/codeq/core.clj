@@ -12,7 +12,8 @@
             [clojure.set]
             [clojure.string :as string]
             [datomic.codeq.repository :as repo]
-            [datomic.codeq.util :refer [index-get-id cond-> index->id-fn tempid?]]
+            [datomic.codeq.util :refer [index-get-id cond-> index->id-fn
+                                        tempid? qmap]]
             [datomic.codeq.analyzer :as az]
             [datomic.codeq.analyzers.clj])
   (:import java.util.Date)
@@ -85,11 +86,32 @@
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
+       :db/ident :repo/refs
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/many
+       :db/doc "Associate repo with these git refs"
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
        :db/ident :repo/uri
        :db/valueType :db.type/string
        :db/cardinality :db.cardinality/one
        :db/doc "A git repo uri"
        :db/unique :db.unique/identity
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :ref/commit
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/one
+       :db/doc "Commit pointed to by git ref"
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :ref/label
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "Git ref label"
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -350,14 +372,14 @@
 
 (defn unimported-commits
   "Returns the commit map of all unimported commits in the repository.
-   Finds all commits that are reachable from a branch or tag."
+  Finds all commits that are reachable from a branch or tag."
   [db repo]
-  (let [imported (set (flatten (d/q '[:find ?sha
-                                      :where
-                                      [?tx :tx/op :import]
-                                      [?tx :tx/commit ?e]
-                                      [?e :git/sha ?sha]]
-                                    db)))
+  (let [imported (set (map first (d/q '[:find ?sha
+                                        :where
+                                        [?tx :tx/op :import]
+                                        [?tx :tx/commit ?e]
+                                        [?e :git/sha ?sha]]
+                                      db)))
         all (repo/commits repo)
         unimported (remove imported all)]
     (pmap (partial repo/commit repo) unimported)))
@@ -398,13 +420,103 @@
     (println "Importing repository:" (:uri info) "as:" (:name info))
     (d/transact conn tx-data)))
 
+(defn deleted-refs
+  "Returns refs that have been deleted from the repo since the last import
+
+  TODO: consider refactoring this to use some sort of set-with.  If you could
+  specify the comparator for the set, then you could have all of the keys in
+  each ref map, but only compare based on :type and :label.  Then you could
+  have the entity/id in the map, and it wouldn't need to be looked up again."
+  [db repo]
+  (let [imported-refs (set (qmap '[:find ?type ?label
+                                   :where
+                                   [?e :git/type ?type]
+                                   [?e :ref/label ?label]]
+                                 [:type :label] db))
+        current-refs (set (map #(dissoc % :commit) (repo/refs repo)))]
+    (clojure.set/difference imported-refs current-refs)))
+
+(defn unimported-refs
+  "Returns refs that have been added or changed since last codeq import."
+  [db repo]
+  (let [imported-refs (set (qmap '[:find ?type ?commit-sha ?label
+                              :where
+                              [?e :git/type ?type]
+                              [?e :ref/label ?label]
+                              [?e :ref/commit ?c]
+                              [?c :git/sha ?commit-sha]]
+                            [:type :commit :label] db))
+        current-refs (set (repo/refs repo))]
+    (clojure.set/difference current-refs imported-refs)))
+
+(defn ref-tx-data
+  "Create transaction data for ref import.
+   Possible scenarios:
+   1) New ref: Create ref entity, and add reference attribute from the repo to
+      the ref.
+   2) Updated ref: Update commit, but don't touch repo entity reference."
+  [db repo {:keys [type label commit]}]
+  (if-let [commit-id (ffirst (d/q '[:find ?e
+                                    :in $ ?sha
+                                    :where
+                                    [?tx :tx/op :import]
+                                    [?tx :tx/commit ?e]
+                                    [?e :git/sha ?sha]]
+                                  db commit))]
+    (let [ref-id (or (ffirst (d/q '[:find ?e
+                                    :in $ ?label ?type
+                                    :where
+                                    [?e :git/type ?type]
+                                    [?e :ref/label ?label]]
+                                  db label type))
+                     (d/tempid :db.part/user))
+          entity-tx {:db/id ref-id
+                      :ref/commit commit-id
+                      :ref/label label
+                      :git/type type}
+          reference-tx {:db/id (repo-id db repo) :repo/refs ref-id}]
+      (if (tempid? ref-id)
+        [entity-tx reference-tx]
+        [entity-tx]))
+    (throw (Exception. (str "while importing ref: " label ", commit: " commit
+                            " has not been imported")))))
+
+(defn ref-retract-data
+  "Create transaction data for ref retraction."
+  [db repo ref]
+  (let [entity-id (ffirst (d/q '[:find ?entity-id
+                                 :in $ ?type ?label
+                                 :where
+                                 [?entity-id :git/type ?type]
+                                 [?entity-id :ref/label ?label]]
+                               db (:type ref) (:label ref)))]
+    [[:db.fn/retractEntity entity-id]]))
+
+(defn import-refs
+  "Import branches and tags into codeq."
+  [conn repo]
+  (let [db (d/db conn)
+        refs (repo/refs repo)
+        unimported (unimported-refs db repo)
+        deleted (deleted-refs db repo)]
+    (doseq [ref unimported]
+      (println "Importing" (name (:type ref)) (:label ref))
+      (->> ref
+        (ref-tx-data db repo)
+        (d/transact conn)))
+    (doseq [ref deleted]
+      (println "Deleting" (name (:type ref)) (:label ref))
+      (->> ref
+        (ref-retract-data db repo)
+        (d/transact conn)))))
+
 (defn import-git
   [conn repo]
   (do
     @(import-repository conn repo)
     (import-commits conn repo)
+    (import-refs conn repo)
     (d/request-index conn)))
-
 
 (def analyzers [(datomic.codeq.analyzers.clj/impl)])
 

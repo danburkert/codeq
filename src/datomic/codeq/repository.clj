@@ -122,5 +122,10 @@
         name (subs uri (inc (.lastIndexOf uri "/")))]
     {:uri uri :name name}))
 
-(tags (->Local "/Users/dcb/src/clojure"))
-(branches (->Local "/Users/dcb/src/clojure"))
+(defn refs [repo]
+  (let [branches (branches repo)
+        tags (tags repo)]
+    (vec
+      (concat
+        (map #(conj % [:type :branch]) branches)
+        (map #(conj % [:type :tag]) tags)))))
