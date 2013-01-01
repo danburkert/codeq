@@ -122,7 +122,6 @@
     (let [remotes (remotes repo)]
       (is (every? remote? remotes)))))
 
-;; fastest with just remotes pmap
 (deftest remote-test
   (testing "test remote function returns valid remote map"
     (let [all-remotes (remotes repo)

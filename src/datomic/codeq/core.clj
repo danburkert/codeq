@@ -9,9 +9,10 @@
 (ns datomic.codeq.core
   (:require [datomic.api :as d]
             [clojure.java.io :as io]
-            [clojure.set]
+            [clojure.set :as set]
             [clojure.string :as string]
             [datomic.codeq.repository :as repo]
+            [datomic.codeq.repository.local :as local]
             [datomic.codeq.util :refer [index-get-id cond-> index->id-fn
                                         tempid? qmap]]
             [datomic.codeq.analyzer :as az]
@@ -294,10 +295,9 @@
             (d/tempid :db.part/user))))))
 
 (defn commit-tx-data
-  "Create transaction data for a commit import.
-
-   TODO: determine whether this function can/should be split up, perhaps
-   splitting out node/tree/blob creation into a seperate node-tx-data fuction."
+  "Create transaction data for a commit import."
+  ;; TODO: determine whether this function can/should be split up, perhaps
+  ;; splitting out node/tree/blob creation into a seperate node-tx-data fuction.
   [db repo {sha :sha message :message tree :tree parents :parents
             {author :email authored :date} :author
             {committer :email committed :date} :committer}]
@@ -386,17 +386,15 @@
 
 (defn import-commits
   "Imports commits from repository into database.  Only imports commits that are not
-   already in codeq.
-
-   TODO: determine whether commits that have already been imported by another repository
-   are handled correctly.
-
-   TODO: explore whether the db-after value of the last transaction can/needs to be
-   returned by this function, so that the caller can be sure it gets a view of the
-   database with all commit transactions processed.  All of the commits must be
-   processed before refs can be imported.  This could probably be done with a reduce
-   by running the transaction in each step of the reduce and return the result in the
-   accumulator."
+   already in codeq."
+  ;; TODO: determine whether commits that have already been imported by another repository
+  ;; are handled correctly.
+  ;; TODO: explore whether the db-after value of the last transaction can/needs to be
+  ;; returned by this function, so that the caller can be sure it gets a view of the
+  ;; database with all commit transactions processed.  All of the commits must be
+  ;; processed before refs can be imported.  This could probably be done with a reduce
+  ;; by running the transaction in each step of the reduce and return the result in the
+  ;; accumulator.
   [conn repo]
   (let [db (d/db conn)
         commits (unimported-commits db repo)]
@@ -421,40 +419,53 @@
     (d/transact conn tx-data)))
 
 (defn deleted-refs
-  "Returns refs that have been deleted from the repo since the last import
-
-   TODO: consider refactoring this to use some sort of set-with.  If you could
-   specify the comparator for the set, then you could have all of the keys in
-   each ref map, but only compare based on :type and :label.  Then you could
-   have the entity/id in the map, and it wouldn't need to be looked up again."
+  "Returns the set of refs that have been deleted from the repo since the last
+   import."
+  ;; Deleted refs have an entity in codeq, but no corresponding ref in the
+  ;; repository with identical :type and :label.
   [db repo]
-  (let [imported-refs (set (qmap '[:find ?type ?label
-                                   :where
-                                   [?e :git/type ?type]
-                                   [?e :ref/label ?label]]
-                                 [:type :label] db))
-        current-refs (set (map #(dissoc % :commit) (repo/refs repo)))]
-    (clojure.set/difference imported-refs current-refs)))
+  (let [repo-id (repo-id db repo)
+        codeq-refs (qmap '[:find ?type ?label ?e
+                           :in $ ?repo-id
+                           :where
+                           [?e :git/type ?type]
+                           [?e :ref/label ?label]
+                           [?repo-id :repo/refs ?e]]
+                         [:type :label :id] db repo-id)
+        repo-refs (repo/refs repo)]
+    (set/join codeq-refs
+              (set/difference
+                (set/project codeq-refs [:type :label])
+                (set/project repo-refs [:type :label])))))
 
 (defn unimported-refs
-  "Returns refs that have been added or changed since last codeq import."
+  "Returns the set of refs which have been added or changed in the repository
+   since the last import (or all refs if first import)."
+  ;; Unimported refs are in the repository, but have no corresponding
+  ;; codeq ref with identical :type :label and :commit attributes
   [db repo]
-  (let [imported-refs (set (qmap '[:find ?type ?commit-sha ?label
-                              :where
-                              [?e :git/type ?type]
-                              [?e :ref/label ?label]
-                              [?e :ref/commit ?c]
-                              [?c :git/sha ?commit-sha]]
-                            [:type :commit :label] db))
-        current-refs (set (repo/refs repo))]
-    (clojure.set/difference current-refs imported-refs)))
+  (let [repo-id (repo-id db repo)
+        codeq-refs (qmap '[:find ?type ?commit-sha ?label
+                           :in $ ?repo-id
+                           :where
+                           [?e :git/type ?type]
+                           [?e :ref/label ?label]
+                           [?e :ref/commit ?c]
+                           [?c :git/sha ?commit-sha]
+                           [?repo-id :repo/refs ?e]]
+                         [:type :commit :label] db repo-id)
+        repo-refs (repo/refs repo)]
+    (set/join repo-refs
+              (set/difference
+                (set/project repo-refs [:type :label :commit])
+                (set codeq-refs)))))
 
 (defn ref-tx-data
-  "Create transaction data for ref import.
-   Possible scenarios:
-   1) New ref: Create ref entity, and add reference attribute from the repo to
-      the ref.
-   2) Updated ref: Update commit, but don't touch repo entity reference."
+  "Create transaction data for ref import."
+  ;; Possible scenarios:
+  ;; 1) New ref: Create ref entity, and add reference attribute from the repo to
+  ;;             the ref.
+  ;; 2) Updated ref: Update commit, but don't touch repo entity reference."
   [db repo {:keys [type label commit]}]
   (if-let [commit-id (ffirst (d/q '[:find ?e
                                     :in $ ?sha
@@ -484,13 +495,7 @@
 (defn ref-retract-data
   "Create transaction data for ref retraction."
   [db repo ref]
-  (let [entity-id (ffirst (d/q '[:find ?entity-id
-                                 :in $ ?type ?label
-                                 :where
-                                 [?entity-id :git/type ?type]
-                                 [?entity-id :ref/label ?label]]
-                               db (:type ref) (:label ref)))]
-    [[:db.fn/retractEntity entity-id]]))
+    [[:db.fn/retractEntity (:id ref)]])
 
 (defn import-refs
   "Import branches and tags into codeq."
@@ -579,7 +584,7 @@
 (defn main [& [location db-uri commit]]
   (if (and location db-uri)
       (let [conn (ensure-db db-uri)
-            repo (repo/->Local location)]
+            repo (local/->Local location)]
         ;;(prn repo-uri)
         (import-git conn repo)
         (run-analyzers conn repo))
