@@ -42,8 +42,8 @@
     "Returns the tag specified by the label argument.  Annotated tags have more
   data than lightweight tags, eg:
       {:label \"v0.9\" ;; annotated
-       :sha \"0a43ee751dd2cca105490129627bee6d73f367bc\"
-       :tag-sha \"a2a50394b87c2df98c94b4cac986fb0274898d23\"
+       :commit \"0a43ee751dd2cca105490129627bee6d73f367bc\"
+       :sha \"a2a50394b87c2df98c94b4cac986fb0274898d23\"
        :tagger {:name \"Dan Burkert\"
                 :email \"danburkert@gmail.com\"}
        :message \"This is an annoted tag message\"
@@ -58,10 +58,10 @@
   (tree [repo sha]
     "Returns the sequence of objects in the tree specified by the sha argument.
   Order is unspecfied. eg:
-      ({:filename \"README.md\"
+      ({:name \"README.md\"
         :sha \"b60ea231eb47eb98395237df17550dee9b38fb72\"
         :type :blob}
-       {:filename \"doc\"
+       {:name \"doc\"
         :sha \"bcfca612efa4ff65b3eb07f6889ebf73afb0e288\"
         :type :tree}
        ...)
@@ -77,10 +77,13 @@
        :uri \"github.com/Datomic/codeq\"}
   Optionally includes the protocol of the remote when available."))
 
+;; Generic Repository Functions
+
 (defn info [repo]
   "Returns metadata about the repository."
   (let [remotes (remotes repo)
-        origin (first (filter (fn [remote] (= (:label remote) "origin")) remotes))
+        origin (first (filter (fn [remote]
+                                (= (:label remote) "origin")) remotes))
         ^String uri (:uri origin)
         name (subs uri (inc (.lastIndexOf uri "/")))]
     {:uri uri :name name}))
@@ -93,3 +96,23 @@
     (concat
       (map #(conj % [:type :branch]) branches)
       (map #(conj % [:type :tag]) tags))))
+
+(defn commit-directory [repo sha]
+  "Returns a tree representation of every node (tree and blob) in the
+   working directory of repo at the commit identified by sha."
+  ;; TODO: The root tree name should be the name of the repository
+  (letfn [(tree-expand
+            [path node]
+            (let [new-path (conj path (:name node))]
+              (condp = (:type node)
+                :blob (-> node
+                          (assoc :path new-path))
+                :tree (-> node
+                          (dissoc :sha)
+                          (assoc :path new-path)
+                          (assoc :files (map (partial tree-expand new-path)
+                                             (tree repo (:sha node))))))))]
+    (tree-expand [] {:type :tree
+                     :mode :040000
+                     :sha (:sha (commit repo sha))
+                     :name ""})))

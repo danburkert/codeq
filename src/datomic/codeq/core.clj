@@ -13,7 +13,8 @@
             [clojure.string :as string]
             [datomic.codeq.repository :as repo]
             [datomic.codeq.repository.local :as local]
-            [datomic.codeq.util :refer [index-get-id cond-> index->id-fn
+            [datomic.codeq.repository.github :as github]
+            [datomic.codeq.util :refer [index-get-id index->id-fn
                                         tempid? qmap]]
             [datomic.codeq.analyzer :as az]
             [datomic.codeq.analyzers.clj])
@@ -309,10 +310,10 @@
         author-id (email->id author)
         committer-id (email->id committer)
         commit-id (d/tempid :db.part/user)
-        tx-data (fn f [inpath {:keys [sha type filename]}] ;; recursively descend through trees & blobs and create transaction data
-                  (let [path (str inpath filename)
+        tx-data (fn f [inpath {:keys [sha type name]}] ;; recursively descend through trees & blobs and create transaction data
+                  (let [path (str inpath name)
                         object-id (sha->id sha)
-                        filename-id (filename->id filename)
+                        filename-id (filename->id name)
                         path-id (filename->id path)
                         node-id (or (and (not (tempid? object-id))
                                          (not (tempid? filename-id))
@@ -325,7 +326,7 @@
                                                         :where [?node :node/paths ?path]]
                                                       db path-id))))
                         data (cond-> []
-                                     (tempid? filename-id) (conj [:db/add filename-id :file/name filename])
+                                     (tempid? filename-id) (conj [:db/add filename-id :file/name name])
                                      (tempid? path-id) (conj [:db/add path-id :file/name path])
                                      (tempid? node-id) (conj {:db/id node-id :node/filename filename-id :node/object object-id})
                                      newpath (conj [:db/add node-id :node/paths path-id])
@@ -340,7 +341,7 @@
                                          data children))
                                data)]
                     [node-id data]))
-        [treeid treedata] (tx-data nil {:sha tree :type :tree :filename repo-name})
+        [treeid treedata] (tx-data nil {:sha tree :type :tree :name repo-name})
         tx (into treedata
                  [[:db/add repo-id :repo/commits commit-id]
                   {:db/id (d/tempid :db.part/tx)

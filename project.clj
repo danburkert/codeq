@@ -5,8 +5,8 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :main datomic.codeq.core
   :plugins [[lein-tar "1.1.0"]]
-  :dependencies [[org.clojure/clojure "1.5.0-alpha6"]
+  :dependencies [[org.clojure/clojure "1.5.0-RC1"]
                  [com.datomic/datomic-free "0.8.3692"]
                  [commons-codec "1.7"]
                  [clj-time "0.4.4"]
-                 [tentacles "0.2.3"]])
+                 [tentacles "0.2.4"]])

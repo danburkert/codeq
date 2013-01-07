@@ -1,6 +1,8 @@
 (ns datomic.codeq.repository-test
   (:use clojure.test
-        datomic.codeq.repository)
+        datomic.codeq.repository
+        datomic.codeq.repository.local
+        datomic.codeq.repository.github)
   (:require [clojure.set :as set]))
 
 (declare repo)
@@ -14,11 +16,15 @@
                 (tree->blobs (:sha file))
                 file)) files))))
 
-(defn- subtrees [root]
-  (conj (mapcat (fn [file] (when (= (:type file) :tree)
-                             (subtrees file)))
-                (tree repo (:sha root)))
-        root))
+(defn- nodes [tree-sha]
+  "Return sequence of subnodes of node tree-sha."
+  (let [subnodes (tree repo tree-sha)]
+    (flatten (map (fn [node]
+              (condp = (:type node)
+                :blob node
+                :tree (conj (nodes (:sha node))
+                            node)))
+            (tree repo tree-sha)))))
 
 (defn- sha? [sha]
   "check that the sha is valid"
@@ -40,21 +46,47 @@
        (contains? committer :email)
        (contains? committer :date)))
 
-(defn- ref? [ref]
-  "check that a branch or tag map is valid"
-  (and (contains? ref :commit)
-       (contains? ref :label)
-       (string? (:label ref))
-       (sha? (:commit ref))))
+(defn- branch? [branch]
+  "check that a branch map is valid"
+  (and (contains? branch :commit)
+       (contains? branch :label)
+       (string? (:label branch))
+       (sha? (:commit branch))))
 
-(defn- tree? [tree]
-  "check that a tree map is valid"
-  (and (contains? tree :filename)
-       (contains? tree :sha)
-       (contains? tree :type)
-       (sha? (:sha tree))
-       (#{:tree :blob} (:type tree))
-       (string? (:filename tree))))
+(defn- tag? [tag]
+  "check that a tag map is a valid lightweight or annotated tag."
+  (let [lightweight-tag? (fn [tag]
+                           (and (= (:annotated tag) false)
+                                (contains? tag :commit)
+                                (contains? tag :label)
+                                (string? (:label tag))
+                                (sha? (:commit tag))))
+        annotated-tag? (fn [{tagger :tagger :as tag}]
+                         (and (= (:annotated tag) true)
+                              (contains? tag :commit)
+                              (contains? tag :message)
+                              (contains? tag :label)
+                              (contains? tagger :name)
+                              (contains? tagger :email)
+                              (contains? tagger :date)
+                              (string? (:label tag))
+                              (string? (:message tag))
+                              (sha? (:commit tag))))]
+    (or (lightweight-tag? tag)
+        (annotated-tag? tag))))
+
+(defn- node? [node]
+  "check that a node map is a valid tree or blob node"
+  (contains? node :name)
+  (contains? node :sha)
+  (contains? node :type)
+  (sha? (:sha node))
+  (string? (:name node))
+  (if-let [mode (:mode node)]
+    (condp = (:type node)
+          :tree (#{:040000} mode)
+          :blob (#{:100644 :100755 :120000} mode))
+    true))
 
 (defn- remote? [remote]
   "check that a remote map is valid"
@@ -62,7 +94,9 @@
        (contains? remote :uri)
        (string? (:label remote))
        (string? (:uri remote))
-       (#{nil :ssh :http :https :git} (:protocol remote))))
+       (if-let [protocol (:protocol remote)]
+         (#{:ssh :http :https :git} protocol)
+         true)))
 
 ;; Tests
 
@@ -79,26 +113,26 @@
 (deftest branches-test
   (testing "test branches function returns valid branch maps"
     (let [branches (branches repo)]
-      (is (every? ref? branches)))))
+      (is (every? branch? branches)))))
 
 (deftest branch-test
   (testing "test branch function returns valid branch map"
     (let [all-branches (branches repo)
           labels (map :label all-branches)
           branches (map (partial branch repo) labels)]
-      (is (every? ref? branches)))))
+      (is (every? branch? branches)))))
 
 (deftest tags-test
   (testing "test tags function returns valid tag maps"
     (let [tags (tags repo)]
-      (is (every? ref? tags)))))
+      (is (every? tag? tags)))))
 
 (deftest tag-test
   (testing "test tag function returns valid tag map"
     (let [all-tags (tags repo)
           labels (map :label all-tags)
           tags (map (partial tag repo) labels)]
-      (is (every? ref? tags)))))
+      (is (every? tag? tags)))))
 
 (deftest blob-test
   (testing "test blob function returns string"
@@ -110,12 +144,11 @@
       (is (every? string? blobs)))))
 
 (deftest tree-test
-  (testing "test tree function returns valid tree map"
+  (testing "test tree function returns valid tree-node maps"
     (let [commit-shas (commits repo)
           root-tree-shas (distinct (pmap (comp :tree (partial commit repo)) commit-shas))
-          root-trees (mapcat (partial tree repo) root-tree-shas)
-          trees (distinct (mapcat subtrees root-trees))]
-      (is (every? tree? trees)))))
+          nodes (distinct (mapcat nodes root-tree-shas))]
+      (is (every? node? nodes)))))
 
 (deftest remotes-test
   (testing "test remotes function returns valid remote maps"
@@ -143,5 +176,11 @@
     (remote-test)))
 
 (defn test-ns-hook []
-  (let [repos (:repositories (-> "test-config.clj" slurp read-string))]
-    (doseq [repo repos] (test-repo repo))))
+  (let [config (-> "test-config.clj" slurp read-string)]
+    (do
+      (doseq [{uri :uri token :token} (:github config)]
+        (println "testing repository" uri)
+        (test-repo (github-repo uri token)))
+      (doseq [{path :path} (:local config)]
+        (println "testing repository" path)
+        (test-repo (local-repo path))))))

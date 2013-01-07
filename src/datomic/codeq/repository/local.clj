@@ -84,8 +84,7 @@
     (first (filter #(= label (:label %)) (branches r))))
 
   (tags [r]
-    ;; TODO: annotated tags should have a :date entry under the :tagger, but
-    ;; it is currently very difficult to parse this from the git output.
+    ;; TODO: annotated tags should have a :date entry under the :tagger entry map
 
     ;; Sample output from `git show-ref --tags`
     ;; a2a50394b87c2df98c94b4cac986fb0274898d23 refs/tags/v1.0
@@ -110,8 +109,7 @@
                              t-name (apply str (interpose " " (rest (butlast t-words))))
                              t-email (subs (last t-words) 1 (dec (count (last t-words))))
                              commit (last msg)
-                             msg (apply str (interpose "\n" (rest (butlast msg))))
-                             ]
+                             msg (apply str (interpose "\n" (rest (butlast msg))))]
                          {:label label :commit commit :sha sha
                           :tagger {:name t-name :email t-email}
                           :message msg :annotated true})
@@ -135,7 +133,7 @@
         (assert (= (git-cmd r (str "cat-file -t " sha)) "tree\n"))
         (let
           [fs (s/split-lines (git-cmd r (str "cat-file -p " sha)))]
-          (map #(-> (zipmap [:mode :type :sha :filename] (words %))
+          (map #(-> (zipmap [:mode :type :sha :name] (words %))
                    (update-in [:type] keyword)
                    (update-in [:mode] keyword)) fs)))
       (catch java.lang.AssertionError e nil)))
@@ -147,3 +145,14 @@
 
   (remote [r label]
     (first (filter #(= label (:label %)) (remotes r)))))
+
+(defn local-repo
+  [path]
+  "Returns the Local repository on the path.  Returns nil if the path does
+   not point to a git repository."
+  (let [repo (->Local path)]
+    (try
+      (do
+        (git-cmd repo "status")
+        repo)
+      (catch java.lang.Throwable e nil))))
