@@ -100,19 +100,16 @@
 (defn commit-directory [repo sha]
   "Returns a tree representation of every node (tree and blob) in the
    working directory of repo at the commit identified by sha."
-  ;; TODO: The root tree name should be the name of the repository
-  (letfn [(tree-expand
-            [path node]
-            (let [new-path (conj path (:name node))]
-              (condp = (:type node)
-                :blob (-> node
-                          (assoc :path new-path))
-                :tree (-> node
-                          (dissoc :sha)
-                          (assoc :path new-path)
-                          (assoc :files (map (partial tree-expand new-path)
-                                             (tree repo (:sha node))))))))]
-    (tree-expand [] {:type :tree
-                     :mode :040000
-                     :sha (:sha (commit repo sha))
-                     :name ""})))
+  ((fn tree-expand
+     [path {:keys [name type sha] :as node}]
+     (let [new-path (conj path name)
+           full-path (apply str (interpose "/" new-path))]
+       (cond-> node
+               true (assoc :path full-path)
+               (= type :tree)
+               (assoc :files (map (partial tree-expand new-path)
+                                  (tree repo sha))))))
+   [] {:type :tree
+       :mode :040000
+       :sha (:tree (commit repo sha))
+       :name (:name (info repo))}))

@@ -297,8 +297,6 @@
 
 (defn commit-tx-data
   "Create transaction data for a commit import."
-  ;; TODO: determine whether this function can/should be split up, perhaps
-  ;; splitting out node/tree/blob creation into a seperate node-tx-data fuction.
   [db repo {sha :sha message :message tree :tree parents :parents
             {author :email authored :date} :author
             {committer :email committed :date} :committer}]
