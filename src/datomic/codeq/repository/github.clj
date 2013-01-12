@@ -22,7 +22,7 @@
                                           :oauth-token token
                                           :sha sha})
             pdate #(tc/to-date (tf/parse (tf/formatters :date-time-no-ms) %))
-            psha #(subs % (inc (.lastIndexOf % "/")))
+            psha #(subs % (inc (.lastIndexOf ^String % "/")))
             format (fn [c]
                      (-> (:commit c)
                          (assoc :tree (get-in c [:commit :tree :sha])
@@ -42,21 +42,38 @@
               (recur (rest cs)))))
         (@commit-index sha))))
 
+(defn- toposort [commits]
+  "Topologically sort commits.  Stolen from
+   https://groups.google.com/d/msg/clojure/-sypb2Djhio/7qNI8v66VNoJ"
+  (letfn [(find-next [uncommitted committed]
+            (some (fn [[k v]] (when (empty? (remove committed v)) k)) uncommitted))]
+    (loop [uncommitted commits committed #{} sorted []]
+      (if (empty? uncommitted)
+        sorted
+        (if-let [item (find-next uncommitted committed)]
+          (recur
+            (dissoc uncommitted item)
+            (conj committed item)
+            (conj sorted item))
+          (throw (Exception. (str "Circular or missing dependency in commit chain."
+                                  "  Commits remaining: " (keys uncommitted)))))))))
 (defn- commit-chain
   [r shas]
-  "Returns all commits in the commit-chains of the supplied shas, ordered by
-   commit date."
-  (let [build-chain
-        (fn [[c & cs :as commits] chain]
-          "commits - worklist of commits yet to be added to the chain
-           chain - accumulator which collects the commits in the chain"
-          (cond
-            (empty? commits) chain
-            (chain c) (recur cs chain)
-            :else (recur (concat (map (partial get-commit r) (:parents c)) cs)
-                         (conj chain c))))]
-    (sort-by #(get-in % [:committer :date])
-             (build-chain (map (partial get-commit r) shas) #{}))))
+  "Returns the shas of the commits in the commit-chains of the supplied shas
+   in a valid commit order."
+  (letfn [(build-chain [chain [c & cs :as commits]]
+            "chain - accumulator which collects the commits in the chain
+             commits - worklist of commits yet to be added to the chain"
+            (cond
+              (empty? commits) chain
+              (chain c) (recur chain cs)
+              :else (recur (conj chain c)
+                           (concat (map (partial get-commit r) (:parents c)) cs))))]
+    (->> (map (partial get-commit r) shas)
+         (build-chain #{})
+         (mapcat #(vector (:sha %) (:parents %)))
+         (apply hash-map)
+         toposort)))
 
 (def  ^{:private true} branches-mem
   (memoize
@@ -109,6 +126,10 @@
                                                        annotated))))]
         (concat annotated lightweight)))))
 
+(defn- repo->uri [repo] (str "github.com/" (:full_name repo)))
+
+(defn- sha? [sha] (re-matches #"[a-f0-9]{40}" sha))
+
 (defrecord Github
   [owner repo token commit-index]
   Repository
@@ -117,15 +138,14 @@
     (->> (branches r)
          (concat (tags r))
          (map :commit)
-         (commit-chain r)
-         (map :sha)))
+         (commit-chain r)))
 
   (commits [r sha]
-    {:pre [(re-matches #"[a-f0-9]{40}" sha)]}
-    (map :sha (commit-chain r [sha])))
+    {:pre [(sha? sha)]}
+    (commit-chain r [sha]))
 
   (commit [r sha]
-    {:pre [(re-matches #"[a-f0-9]{40}" sha)]}
+    {:pre [(sha? sha)]}
     (let [sha (if (re-matches #"[a-f0-9]{40}" sha)
                 sha
                 (:sha (or (tag r sha) (branch r sha))))]
@@ -146,15 +166,16 @@
     (first (filter #(= (:label %) label) (tags r))))
 
   (blob [r sha]
+    {:pre [(sha? sha)]}
     (data/blob owner repo sha {:oauth-token token
                                :accept "application/vnd.github.beta.raw+json"}))
 
   (tree [r sha]
+    {:pre [(sha? sha)]}
     (tree-mem r sha))
 
   (remotes [r]
     (let [info (info-mem r)
-          repo->uri #(str "github.com/" (:full_name %))
           origin {:label "origin" :uri (repo->uri info)}
           roots (if-not (:fork info) []
                   [{:label "parent" :uri (repo->uri (:parent info))}
@@ -163,7 +184,19 @@
 
   (remote [r label]
     (let [rs (remotes r)]
-      (first (filter #(= (:label %) label) rs)))))
+      (first (filter #(= (:label %) label) rs))))
+
+  (info [r]
+    (let [info (info-mem r)]
+      (cond-> {:name repo
+               :uri (str "github.com/" owner "/" repo)
+               :forks (:forks_count info)
+               :stars (:watchers_count info)
+               :default_branch (:default_branch info)
+               :description (:description info)}
+              (seq (:homepage info)) (assoc :homepage (:homepage info))
+              (contains? info :parent) (assoc :parent
+                                              (repo->uri (:parent info)))))))
 
 (defn github-repo
   [uri token]

@@ -75,18 +75,13 @@
     "Returns the remote repository specified by label argument, eg:
       {:label \"origin\"
        :uri \"github.com/Datomic/codeq\"}
-  Optionally includes the protocol of the remote when available."))
+  Optionally includes the protocol of the remote when available.")
+
+  (info [repo]
+    "Returns a map of info about the repository.  Includes the repository's
+     name and uri.  Optionally includes more info if available."))
 
 ;; Generic Repository Functions
-
-(defn info [repo]
-  "Returns metadata about the repository."
-  (let [remotes (remotes repo)
-        origin (first (filter (fn [remote]
-                                (= (:label remote) "origin")) remotes))
-        ^String uri (:uri origin)
-        name (subs uri (inc (.lastIndexOf uri "/")))]
-    {:uri uri :name name}))
 
 (defn refs [repo]
   "Returns a sequence of the branches and tags in the repository, with an

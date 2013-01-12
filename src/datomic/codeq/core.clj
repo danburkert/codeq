@@ -11,6 +11,7 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as string]
+            [clojure.tools.cli :refer [cli]]
             [datomic.codeq.repository :as repo]
             [datomic.codeq.repository.local :as local]
             [datomic.codeq.repository.github :as github]
@@ -100,6 +101,34 @@
        :db/cardinality :db.cardinality/one
        :db/doc "A git repo uri"
        :db/unique :db.unique/identity
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/stars
+       :db/valueType :db.type/long
+       :db/cardinality :db.cardinality/one
+       :db/doc "Number of repository stars."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/forks
+       :db/valueType :db.type/long
+       :db/cardinality :db.cardinality/one
+       :db/doc "Number of repository forks."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/homepage
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "Repository homepage."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/parent
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/one
+       :db/doc "Parent repository."
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -406,13 +435,27 @@
 (defn repository-tx-data
   "Create transaction data for repository import. :repo/uri is a unique/identity
    attribute, so transaction will update existing repository entity if present."
-  [repo]
-  [{:db/id (d/tempid :db.part/user)
-    :repo/uri (:uri (repo/info repo))}])
+  [db repo]
+  (let [info (repo/info repo)
+        parent (:parent info)
+        parent-id (when parent
+                    (ffirst (d/q '[:find ?e
+                                   :in $ ?uri
+                                   :where [?e :repo/uri ?uri]]
+                                 db parent)))]
+    (do (assert (or (and parent parent-id)
+                    (not parent)) "Parent repository not imported.")
+        [(cond-> {:db/id (d/tempid :db.part/user)
+                  :repo/uri (:uri (repo/info repo))}
+                 (contains? info :stars) (assoc :repo/stars (:stars info))
+                 (contains? info :forks) (assoc :repo/forks (:forks info))
+                 (contains? info :homepage) (assoc :repo/homepage (:homepage info))
+                 parent-id (assoc :repo/parent parent-id))])))
 
 (defn import-repository
   [conn repo]
-  (let [tx-data (repository-tx-data repo)
+  (let [db (d/db conn)
+        tx-data (repository-tx-data db repo)
         info (repo/info repo)]
     (println "Importing repository:" (:uri info) "as:" (:name info))
     (d/transact conn tx-data)))
@@ -580,17 +623,25 @@
                                      :tx/analyzerRev arev})))))))
   (println "Analysis complete!"))
 
-(defn main [& [location db-uri commit]]
-  (if (and location db-uri)
-      (let [conn (ensure-db db-uri)
-            repo (local/->Local location)]
-        ;;(prn repo-uri)
-        (import-git conn repo)
-        (run-analyzers conn repo))
-      (println "Usage: datomic.codeq.core repo-location db-uri [commit-name]")))
+(defn main [repo db-uri]
+  (let [conn (ensure-db db-uri)]
+    (import-git conn repo)
+    (run-analyzers conn repo)))
 
-(defn -main
-  [& args]
-  (apply main args)
-  (shutdown-agents)
-  (System/exit 0))
+(defn -main [& args]
+  (let
+    [[opts _ msg]
+     (cli args
+          ["-r" "--repo" "Repository URI.  Local file path to repository or Github clone URL."]
+          ["-t" "--token" "Github OAuth token. Required for importing Github repositories."]
+          ["-d" "--datomic" "Datomic database URI."
+           :default "datomic:free://localhost:4334/codeq"])
+     repo (when (:repo opts)
+            (if (:token opts)
+              (github/github-repo (:repo opts) (:token opts))
+              (local/local-repo (:repo opts))))]
+    (do (if repo
+          (main repo (:datomic opts))
+          (println msg))
+        (shutdown-agents)
+        (System/exit 0))))

@@ -144,7 +144,15 @@
       (map #(assoc (url->uri (second %)) :label (first %)) remotes)))
 
   (remote [r label]
-    (first (filter #(= label (:label %)) (remotes r)))))
+    (first (filter #(= label (:label %)) (remotes r))))
+
+  (info [r]
+      (let [remotes (remotes r)
+            origin (first (filter (fn [remote]
+                                    (= (:label remote) "origin")) remotes))
+            ^String uri (:uri origin)
+            name (subs uri (inc (.lastIndexOf uri "/")))]
+        {:uri uri :name name})))
 
 (defn local-repo
   [path]
