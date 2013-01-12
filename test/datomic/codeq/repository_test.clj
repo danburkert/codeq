@@ -98,6 +98,11 @@
          (#{:ssh :http :https :git} protocol)
          true)))
 
+(defn- info? [info]
+  "check that an info map is valid"
+  (and (string? (:name info))
+       (string? (:uri info))))
+
 ;; Tests
 
 (deftest commits-test
@@ -162,6 +167,10 @@
           remotes (pmap (partial remote repo) remote-labels)]
       (is (every? remote? remotes)))))
 
+(deftest info-test
+  (testing "test info function returns valid remote map"
+    (is (info? (info repo)))))
+
 (defn test-repo [repo]
   (with-redefs [repo repo]
     (commits-test)
@@ -173,7 +182,8 @@
     (blob-test)
     (tree-test)
     (remotes-test)
-    (remote-test)))
+    (remote-test)
+    (info-test)))
 
 (defn test-ns-hook []
   (let [config (-> "test-config.clj" slurp read-string)]
