@@ -189,7 +189,7 @@
   (info [r]
     (let [info (info-mem r)]
       (cond-> {:name repo
-               :uri (str "github.com/" owner "/" repo)
+               :uri (repo->uri info)
                :forks (:forks_count info)
                :stars (:watchers_count info)
                :default-branch (:default_branch info)
