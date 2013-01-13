@@ -93,6 +93,15 @@
        :db/valueType :db.type/ref
        :db/cardinality :db.cardinality/many
        :db/doc "Associate repo with these git refs"
+       :db/unique :db.unique/value
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/default-branch
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/one
+       :db/doc "Default branch of repository."
+       :db/unique :db.unique/value
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -457,7 +466,7 @@
   (let [db (d/db conn)
         tx-data (repository-tx-data db repo)
         info (repo/info repo)]
-    (println "Importing repository:" (:uri info) "as:" (:name info))
+    (println "Importing repository:" (:uri info))
     (d/transact conn tx-data)))
 
 (defn deleted-refs
@@ -542,11 +551,11 @@
   [db repo ref]
     [[:db.fn/retractEntity (:id ref)]])
 
-
 (defn import-refs
   "Import branches and tags into codeq."
   [conn repo]
   (let [db (d/db conn)
+        info (repo/info repo)
         refs (repo/refs repo)
         unimported (unimported-refs db repo)
         deleted (deleted-refs db repo)]
@@ -561,12 +570,36 @@
            (ref-retract-data db repo)
            (d/transact conn)))))
 
+(defn import-default-branch
+  "Import default branch of repo into codeq."
+  [conn repo]
+  (let [db (d/db conn)
+        info (repo/info repo)]
+    (if-let [repo-id (index-get-id db :repo/uri (:uri info))]
+      (if-let [default-label (:default-branch info)]
+        (if-let [default-id
+                 (ffirst (d/q '[:find ?default-id
+                                :in $ ?repo-id ?default-label
+                                :where
+                                [?repo-id :repo/refs ?default-id]
+                                [?default-id :git/type :branch]
+                                [?default-id :ref/label ?default-label]]
+                              db repo-id default-label))]
+          (do (println (str "Setting default branch to " default-label))
+              (d/transact conn [{:db/id repo-id
+                                 :repo/default-branch default-id}]))
+          (println (str "Default branch import failed.  Branch "
+                        default-label " not imported yet."))))
+      (println (str "Default branch import failed.  Repository "
+                    (:uri info) " not imported yet.")))))
+
 (defn import-git
   [conn repo]
   (do
     @(import-repository conn repo)
     (import-commits conn repo)
     (import-refs conn repo)
+    (import-default-branch conn repo)
     (d/request-index conn)))
 
 (def analyzers [(datomic.codeq.analyzers.clj/impl)])

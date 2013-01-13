@@ -192,7 +192,7 @@
                :uri (str "github.com/" owner "/" repo)
                :forks (:forks_count info)
                :stars (:watchers_count info)
-               :default_branch (:default_branch info)
+               :default-branch (:default_branch info)
                :description (:description info)}
               (seq (:homepage info)) (assoc :homepage (:homepage info))
               (contains? info :parent) (assoc :parent
