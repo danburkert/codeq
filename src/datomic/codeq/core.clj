@@ -516,12 +516,15 @@
                                     [?tx :tx/commit ?e]
                                     [?e :git/sha ?sha]]
                                   db commit))]
-    (let [ref-id (or (ffirst (d/q '[:find ?e
-                                    :in $ ?label ?type
+    (let [uri (:uri (repo/info repo))
+          ref-id (or (ffirst (d/q '[:find ?ref
+                                    :in $ ?label ?type ?uri
                                     :where
-                                    [?e :git/type ?type]
-                                    [?e :ref/label ?label]]
-                                  db label type))
+                                    [?repo :repo/uri ?uri]
+                                    [?repo :repo/refs ?ref]
+                                    [?ref :git/type ?type]
+                                    [?ref :ref/label ?label]]
+                                  db label type uri))
                      (d/tempid :db.part/user))
           entity-tx {:db/id ref-id
                      :ref/commit commit-id
@@ -538,6 +541,7 @@
   "Create transaction data for ref retraction."
   [db repo ref]
     [[:db.fn/retractEntity (:id ref)]])
+
 
 (defn import-refs
   "Import branches and tags into codeq."
