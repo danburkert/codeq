@@ -97,7 +97,7 @@
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
-       :db/ident :repo/default-branch
+       :db/ident :repo/defaultBranch
        :db/valueType :db.type/ref
        :db/cardinality :db.cardinality/one
        :db/doc "Default branch of repository."
@@ -587,7 +587,7 @@
                               db repo-id default-label))]
           (do (println (str "Setting default branch to " default-label))
               (d/transact conn [{:db/id repo-id
-                                 :repo/default-branch default-id}]))
+                                 :repo/defaultBranch default-id}]))
           (println (str "Default branch import failed.  Branch "
                         default-label " not imported yet."))))
       (println (str "Default branch import failed.  Repository "
