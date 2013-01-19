@@ -1,4 +1,4 @@
-(ns datomic.codeq.repository.github
+(ns datomic.codeq.repositories.github
   (:require [datomic.codeq.repository :refer :all]
             [clojure.set :as set]
             [clj-time.coerce :as tc]

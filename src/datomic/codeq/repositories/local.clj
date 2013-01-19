@@ -1,4 +1,4 @@
-(ns datomic.codeq.repository.local
+(ns datomic.codeq.repositories.local
   (:require [datomic.codeq.repository :refer :all]
             [clojure.java.shell :as sh]
             [clojure.string :as s])

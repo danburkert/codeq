@@ -13,8 +13,8 @@
             [clojure.string :as string]
             [clojure.tools.cli :refer [cli]]
             [datomic.codeq.repository :as repo]
-            [datomic.codeq.repository.local :as local]
-            [datomic.codeq.repository.github :as github]
+            [datomic.codeq.repositories.local :as local]
+            [datomic.codeq.repositories.github :as github]
             [datomic.codeq.util :refer [index-get-id index->id-fn
                                         tempid? qmap]]
             [datomic.codeq.analyzer :as az]

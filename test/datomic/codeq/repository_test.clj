@@ -1,8 +1,8 @@
 (ns datomic.codeq.repository-test
   (:use clojure.test
         datomic.codeq.repository
-        datomic.codeq.repository.local
-        datomic.codeq.repository.github)
+        datomic.codeq.repositories.local
+        datomic.codeq.repositories.github)
   (:require [clojure.set :as set]))
 
 (declare repo)
