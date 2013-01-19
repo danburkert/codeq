@@ -208,9 +208,9 @@
      git@github.com:clojure/clojure.git
      git://github.com/clojure/clojure.git"
   (if-let [[_ owner repo] ((some-fn
-                             (partial re-matches #"^https?://github.com/([^/]+)/([^/]+)\.git$")
-                             (partial re-matches #"^git@github.com:([^/]+)/([^/]+)\.git$")
-                             (partial re-matches #"^git://github.com/([^/]+)/([^/]+)\.git$"))
+                             (partial re-matches #"^https?://github.com/([^/]+)/([^/]+)(\.git)?$")
+                             (partial re-matches #"^git@github.com:([^/]+)/([^/]+)(\.git)?$")
+                             (partial re-matches #"^git://github.com/([^/]+)/([^/]+)(\.git)?$"))
                            uri)]
     (when (contains? (repos/specific-repo owner repo {:oauth-token token}) :name)
       (->Github owner repo token (atom {})))))
