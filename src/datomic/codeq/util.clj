@@ -35,3 +35,13 @@
   [query keys db & args]
   (->> (apply d/q query db args)
     (mapv (partial zipmap keys))))
+
+(defn strip-attribute
+  "Removes datoms of attribute from a sequence of transactions datoms."
+  [attribute tx-data]
+  (->> tx-data
+       (filter (fn [tx] (or (map? tx)
+                            (not= (nth tx 2) attribute))))
+       (map (fn [tx] (if (map? tx)
+                       (dissoc tx attribute)
+                       tx)))))

@@ -16,7 +16,7 @@
             [datomic.codeq.repositories.local :as local]
             [datomic.codeq.repositories.github :as github]
             [datomic.codeq.util :refer [index-get-id index->id-fn
-                                        tempid? qmap]]
+                                        tempid? qmap strip-attribute]]
             [datomic.codeq.analyzer :as az]
             [datomic.codeq.analyzers.clj])
   (:import java.util.Date)
@@ -605,7 +605,7 @@
 (def analyzers [(datomic.codeq.analyzers.clj/impl)])
 
 (defn run-analyzers
-  [conn repo]
+  [conn repo {:keys [verbose import-text]}]
   (println "Analyzing...")
   (doseq [a analyzers]
     (let [aname (az/keyname a)
@@ -651,19 +651,22 @@
                         (az/analyze a db f src)
                         (catch Exception ex
                           (println (.getMessage ex))
-                          []))]
-            (d/transact conn
-                        (conj adata {:db/id (d/tempid :db.part/tx)
-                                     :tx/op :analyze
-                                     :tx/file f
-                                     :tx/analyzer aname
-                                     :tx/analyzerRev arev})))))))
+                          []))
+                tdata (conj adata {:db/id (d/tempid :db.part/tx)
+                                   :tx/op :analyze
+                                   :tx/file f
+                                   :tx/analyzer aname
+                                   :tx/analyzerRev arev})]
+            (cond->> tdata
+              (not import-text) (strip-attribute :code/text)
+              verbose clojure.pprint/pprint
+              true (d/transact conn)))))))
   (println "Analysis complete!"))
 
-(defn main [repo db-uri]
+(defn main [repo db-uri analyser-opts]
   (let [conn (ensure-db db-uri)]
     (import-git conn repo)
-    (run-analyzers conn repo)))
+    (run-analyzers conn repo analyser-opts)))
 
 (defn -main [& args]
   (let
@@ -672,13 +675,15 @@
           ["-r" "--repo" "Repository URI.  Local file path to repository or Github clone URL."]
           ["-t" "--token" "Github OAuth token. Required for importing Github repositories."]
           ["-d" "--datomic" "Datomic database URI."
-           :default "datomic:free://localhost:4334/codeq"])
+           :default "datomic:free://localhost:4334/codeq"]
+          ["-v" "--verbose" "Print analysis transaction data." :flag true :default false]
+          ["--import-text" "Import text of codeqs." :flag true :default true])
      repo (when (:repo opts)
             (if (:token opts)
               (github/github-repo (:repo opts) (:token opts))
               (local/local-repo (:repo opts))))]
     (do (if repo
-          (main repo (:datomic opts))
+          (main repo (:datomic opts) (select-keys opts [:verbose :import-text]))
           (println msg))
         (shutdown-agents)
         (System/exit 0))))
