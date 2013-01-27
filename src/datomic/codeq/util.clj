@@ -7,7 +7,8 @@
 ;;   You must not remove this notice, or any other, from this software.
 
 (ns datomic.codeq.util
-  (:require [datomic.api :as d]))
+  (:require [datomic.api :as d])
+  (:require [clojure.java.shell :as sh]))
 
 (set! *warn-on-reflection* true)
 
@@ -45,3 +46,38 @@
        (map (fn [tx] (if (map? tx)
                        (dissoc tx attribute)
                        tx)))))
+
+(defn highlight
+  "Include :code/highlight attribute in new code segment entities included in
+   transaction data.  Depends on pygmentize being on the path.
+
+   This will highlight the code segment's text using a highlighter appropriate
+   for the importing analyser. So in the incredibly unlikely event that there
+   are two identical code segments from different languages that would require
+   seperate highlighting parsers, the first imported will win."
+  [file-ext tx-data]
+  (let [pygmentize
+        (fn [text]
+          (let [rtn (sh/sh "pygmentize" (str "-l" (subs file-ext 1))
+                           "-fhtml" :in text)]
+            (if (= (:exit rtn) 0)
+              (:out rtn)
+              (println "Pygmentize unable to highlight input. " (:err rtn)))))
+        add-tx
+        (fn [tx]
+          (cond
+            (map? tx)
+            (if (contains? tx :code/text)
+              (assoc tx :code/highlight (pygmentize (:code/text tx)))
+              tx)
+
+            (vector? tx)
+            (if (and (= (nth tx 2) :code/text) (= (nth tx 0) :db/add))
+              {:db/id (nth tx 1)
+               (nth tx 2) (nth tx 3)
+               :code/highlight (pygmentize (nth tx 3))}
+              tx)
+
+            :else (throw (IllegalArgumentException.
+                           (str "Transaction is not map or vector: " tx)))))]
+    (map add-tx tx-data)))

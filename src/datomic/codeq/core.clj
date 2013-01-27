@@ -9,7 +9,7 @@
 (ns datomic.codeq.core
   (:require [datomic.api :as d]
             [clojure.set :as set]
-            [clojure.string :as string]
+            [clojure.pprint :as pprint]
             [clojure.tools.cli :refer [cli]]
             [datomic.codeq.repository :as repo]
             [datomic.codeq.repositories.local :as local]
@@ -299,6 +299,13 @@
        :db/cardinality :db.cardinality/one
        :db/doc "The source code for a code segment"
        ;;:db/fulltext true
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :code/highlight
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "The highlighted HTML source code for a code segment"
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -603,7 +610,7 @@
 (def analyzers [(datomic.codeq.analyzers.clj/impl)])
 
 (defn run-analyzers
-  [conn repo {:keys [verbose import-text]}]
+  [conn repo {:keys [verbose import-text highlight]}]
   (println "Analyzing...")
   (doseq [a analyzers]
     (let [aname (az/keyname a)
@@ -656,8 +663,9 @@
                                    :tx/analyzer aname
                                    :tx/analyzerRev arev})]
             (cond->> tdata
-              (not import-text) (strip-attribute :code/text)
-              verbose clojure.pprint/pprint
+              highlight (util/highlight (first exts))
+              (not import-text) (util/strip-attribute :code/text)
+              verbose ((fn [txs] (pprint/pprint txs) txs))
               true (d/transact conn)))))))
   (println "Analysis complete!"))
 
@@ -675,13 +683,14 @@
           ["-d" "--datomic" "Datomic database URI."
            :default "datomic:free://localhost:4334/codeq"]
           ["-v" "--verbose" "Print analysis transaction data." :flag true :default false]
-          ["--import-text" "Import text of codeqs." :flag true :default true])
+          ["--import-text" "Import text of codeqs." :flag true :default true]
+          ["-h" "--highlight" "Import highlighted codeq text." :flag true :default false])
      repo (when (:repo opts)
             (if (:token opts)
               (github/github-repo (:repo opts) (:token opts))
               (local/local-repo (:repo opts))))]
     (do (if repo
-          (main repo (:datomic opts) (select-keys opts [:verbose :import-text]))
+          (main repo (:datomic opts) (select-keys opts [:verbose :import-text :highlight]))
           (println msg))
         (shutdown-agents)
         (System/exit 0))))
