@@ -7,10 +7,10 @@
             [tentacles.repos :as repos]))
 
 (defn- get-commit
-  [{:keys [owner repo token commit-index]} sha]
   "Retrieves sha from the commit-index.  If the index does not contain the
    commit, then then the commit chain is requested from github, and added to
    the index."
+  [{:keys [owner repo token commit-index]} sha]
   ;; Currently the Github API only follows one parent of commits in the history,
   ;; so it cannot be relied on to provide a full commit history of a chain.  By
   ;; always accessing commits via this function, we can request missing commits
@@ -42,9 +42,10 @@
               (recur (rest cs)))))
         (@commit-index sha))))
 
-(defn- toposort [commits]
+(defn- toposort
   "Topologically sort commits.  Stolen from
    https://groups.google.com/d/msg/clojure/-sypb2Djhio/7qNI8v66VNoJ"
+  [commits]
   (letfn [(find-next [uncommitted committed]
             (some (fn [[k v]] (when (empty? (remove committed v)) k)) uncommitted))]
     (loop [uncommitted commits committed #{} sorted []]
@@ -58,9 +59,9 @@
           (throw (Exception. (str "Circular or missing dependency in commit chain."
                                   "  Commits remaining: " (keys uncommitted)))))))))
 (defn- commit-chain
-  [r shas]
   "Returns the shas of the commits in the commit-chains of the supplied shas
    in a valid commit order."
+  [r shas]
   (letfn [(build-chain [chain [c & cs :as commits]]
             "chain - accumulator which collects the commits in the chain
              commits - worklist of commits yet to be added to the chain"
@@ -199,14 +200,14 @@
                                               (repo->uri (:parent info)))))))
 
 (defn github-repo
-  [uri token]
-  {:pre [(string? uri) (string? token)]}
   "Returns a Github repository of the uri.  Uses the github OAuth token in
    all api calls.  Returns nil if uri or token are invalid.  Example URIs:
      http://github.com/clojure/clojure.git
      https://github.com/clojure/clojure.git
      git@github.com:clojure/clojure.git
      git://github.com/clojure/clojure.git"
+  [uri token]
+  {:pre [(string? uri) (string? token)]}
   (if-let [[_ owner repo] ((some-fn
                              (partial re-matches #"^https?://github.com/([^/]+)/([^/]+)(\.git)?$")
                              (partial re-matches #"^git@github.com:([^/]+)/([^/]+)(\.git)?$")

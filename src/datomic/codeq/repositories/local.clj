@@ -6,19 +6,21 @@
 
 (defn- words [^String s] (filterv #(not= % "") (s/split s #"\s+")))
 
-(defn- git-cmd [repo cmd]
+(defn- git-cmd
   "wrapper for shelling out to the git cli interface.  Sends command to
    git repository, checks for a non-error response, and returns response."
+  [repo cmd]
   (sh/with-sh-dir (:path repo)
                   (let [args (conj (seq (s/split cmd #"\s")) "git")
                         rtn (apply sh/sh args)]
                     (assert (= (rtn :exit) 0) "Non-zero return from git")
                     (rtn :out))))
 
-(defn- url->uri [url]
-  {:pre [(re-find #"\.git$" url)]}
+(defn- url->uri
   "Takes a remote git protocol url and returns the uri and protocol.
   Works with HTTP, HTTPS, SSH and git protocols."
+  [url]
+  {:pre [(re-find #"\.git$" url)]}
   (let [cut #(s/replace %1 %2 "")
         url' (cut url #"\.git$")]
     (cond
@@ -155,9 +157,9 @@
         {:uri uri :name name})))
 
 (defn local-repo
-  [path]
   "Returns the Local repository on the path.  Returns nil if the path does
    not point to a git repository."
+  [path]
   (let [repo (->Local path)]
     (try
       (do

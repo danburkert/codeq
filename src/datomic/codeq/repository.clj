@@ -83,18 +83,20 @@
 
 ;; Generic Repository Functions
 
-(defn refs [repo]
+(defn refs
   "Returns a sequence of the branches and tags in the repository, with an
    appropriate :type tag"
+  [repo]
   (let [branches (branches repo)
         tags (tags repo)]
     (concat
       (map #(conj % [:type :branch]) branches)
       (map #(conj % [:type :tag]) tags))))
 
-(defn commit-directory [repo sha]
+(defn commit-directory
   "Returns a tree representation of every node (tree and blob) in the
    working directory of repo at the commit identified by sha."
+  [repo sha]
   ((fn tree-expand
      [path {:keys [name type sha] :as node}]
      (let [new-path (conj path name)
