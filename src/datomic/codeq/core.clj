@@ -8,15 +8,13 @@
 
 (ns datomic.codeq.core
   (:require [datomic.api :as d]
-            [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as string]
             [clojure.tools.cli :refer [cli]]
             [datomic.codeq.repository :as repo]
             [datomic.codeq.repositories.local :as local]
             [datomic.codeq.repositories.github :as github]
-            [datomic.codeq.util :refer [index-get-id index->id-fn
-                                        tempid? qmap strip-attribute]]
+            [datomic.codeq.util :as util]
             [datomic.codeq.analyzer :as az]
             [datomic.codeq.analyzers.clj])
   (:import java.util.Date)
@@ -340,9 +338,9 @@
             {committer :email committed :date} :committer}]
   (let [repo-id (repo-id db repo)
         repo-name (:name (repo/info repo))
-        sha->id (index->id-fn db :git/sha)
-        email->id (index->id-fn db :email/address)
-        filename->id (index->id-fn db :file/name)
+        sha->id (util/index->id-fn db :git/sha)
+        email->id (util/index->id-fn db :email/address)
+        filename->id (util/index->id-fn db :file/name)
         author-id (email->id author)
         committer-id (email->id committer)
         commit-id (d/tempid :db.part/user)
@@ -351,29 +349,29 @@
                         object-id (sha->id sha)
                         filename-id (filename->id name)
                         path-id (filename->id path)
-                        node-id (or (and (not (tempid? object-id))
-                                         (not (tempid? filename-id))
+                        node-id (or (and (not (util/tempid? object-id))
+                                         (not (util/tempid? filename-id))
                                          (ffirst (d/q '[:find ?e :in $ ?filename ?id
                                                         :where [?e :node/filename ?filename] [?e :node/object ?id]]
                                                       db filename-id object-id)))
                                     (d/tempid :db.part/user))
-                        newpath (or (tempid? path-id) (tempid? node-id)
+                        newpath (or (util/tempid? path-id) (util/tempid? node-id)
                                     (not (ffirst (d/q '[:find ?node :in $ ?path
                                                         :where [?node :node/paths ?path]]
                                                       db path-id))))
                         data (cond-> []
-                                     (tempid? filename-id) (conj [:db/add filename-id :file/name name])
-                                     (tempid? path-id) (conj [:db/add path-id :file/name path])
-                                     (tempid? node-id) (conj {:db/id node-id :node/filename filename-id :node/object object-id})
+                                     (util/tempid? filename-id) (conj [:db/add filename-id :file/name name])
+                                     (util/tempid? path-id) (conj [:db/add path-id :file/name path])
+                                     (util/tempid? node-id) (conj {:db/id node-id :node/filename filename-id :node/object object-id})
                                      newpath (conj [:db/add node-id :node/paths path-id])
-                                     (tempid? object-id) (conj {:db/id object-id :git/sha sha :git/type type}))
+                                     (util/tempid? object-id) (conj {:db/id object-id :git/sha sha :git/type type}))
                         data (if (and newpath (= type :tree))
                                (let [children (repo/tree repo sha)]
                                  (reduce (fn [data child]
                                            (let [[commit-id cdata] (f (str path "/") child)
                                                  data (into data cdata)]
                                              (cond-> data
-                                                     (tempid? object-id) (conj [:db/add object-id :tree/nodes commit-id]))))
+                                                     (util/tempid? object-id) (conj [:db/add object-id :tree/nodes commit-id]))))
                                          data children))
                                data)]
                     [node-id data]))
@@ -396,14 +394,14 @@
                           parents (assoc :commit/parents
                                          (mapv (fn [p]
                                                  (let [id (sha->id p)]
-                                                   (assert (not (tempid? id))
+                                                   (assert (not (util/tempid? id))
                                                            (str "Parent " p " not previously imported"))
                                                    id))
                                                parents)))])
         tx (cond-> tx
-                   (tempid? author-id)
+                   (util/tempid? author-id)
                    (conj [:db/add author-id :email/address author])
-                   (and (not= committer author) (tempid? committer-id))
+                   (and (not= committer author) (util/tempid? committer-id))
                    (conj [:db/add committer-id :email/address committer]))]
     tx))
 
@@ -476,7 +474,7 @@
   ;; repository with identical :type and :label.
   [db repo]
   (let [repo-id (repo-id db repo)
-        codeq-refs (qmap '[:find ?type ?label ?e
+        codeq-refs (util/qmap '[:find ?type ?label ?e
                            :in $ ?repo-id
                            :where
                            [?e :git/type ?type]
@@ -496,7 +494,7 @@
   ;; codeq ref with identical :type :label and :commit attributes
   [db repo]
   (let [repo-id (repo-id db repo)
-        codeq-refs (qmap '[:find ?type ?commit-sha ?label
+        codeq-refs (util/qmap '[:find ?type ?commit-sha ?label
                            :in $ ?repo-id
                            :where
                            [?e :git/type ?type]
@@ -540,7 +538,7 @@
                      :ref/label label
                      :git/type type}
           reference-tx {:db/id (repo-id db repo) :repo/refs ref-id}]
-      (if (tempid? ref-id)
+      (if (util/tempid? ref-id)
         [entity-tx reference-tx]
         [entity-tx]))
     (throw (Exception. (str "while importing ref: " label ", commit: " commit
@@ -575,7 +573,7 @@
   [conn repo]
   (let [db (d/db conn)
         info (repo/info repo)]
-    (if-let [repo-id (index-get-id db :repo/uri (:uri info))]
+    (if-let [repo-id (util/index-get-id db :repo/uri (:uri info))]
       (if-let [default-label (:default-branch info)]
         (if-let [default-id
                  (ffirst (d/q '[:find ?default-id
