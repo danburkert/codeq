@@ -7,5 +7,8 @@
   :plugins [[lein-tar "1.1.0"]]
   :dependencies [[com.datomic/datomic-free "0.8.3941"]
                  [commons-codec "1.7"]
-                 [org.clojure/clojure "1.5.1"]]
-  :source-paths ["src" "examples/src"])
+                 [org.clojure/clojure "1.5.1"]
+                 [clj-time "0.5.0"]
+                 [tentacles "0.2.4"]]
+  :source-paths ["src" "examples/src"]
+  :jvm-opts ["-server" "-Xmx1g"])

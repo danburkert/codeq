@@ -12,12 +12,16 @@
 (set! *warn-on-reflection* true)
 
 (defn index-get-id
+  "Get id of attribute attr in database db of value v"
   [db attr v]
   (let [d (first (d/index-range db attr v nil))]
     (when (and d (= (:v d) v))
       (:e d))))
 
 (defn index->id-fn
+  "Return function which takes a value, and returns the id of
+   the attribute with the passed in value.  Finds existing id
+   or creates new temporary id."
   [db attr]
   (memoize
    (fn [x]
@@ -25,3 +29,9 @@
          (d/tempid :db.part/user)))))
 
 (def tempid? map?)
+
+(defn qmap
+  "Returns the results of a query in map form with specified keys"
+  [query keys db & args]
+  (mapv (partial zipmap keys)
+        (apply d/q query db args)))

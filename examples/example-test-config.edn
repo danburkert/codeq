@@ -1,0 +1,5 @@
+;; Fill in test repositories, rename test-config.edn, and move to project root
+
+{:github [{:uri "https://github.com/datomic/codeq.git"
+           :token "abc123"}]
+ :local [{:path "/usr/local/codeq"}]}
