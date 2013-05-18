@@ -68,7 +68,7 @@
        :db/valueType :db.type/keyword
        :db/cardinality :db.cardinality/one
        :db/index true
-       :db/doc "Type enum for git objects - one of :commit, :tree, :blob, :tag"
+       :db/doc "Type enum for git objects - one of :commit, :tree, :blob, :tag, :branch"
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -92,6 +92,28 @@
        :db/cardinality :db.cardinality/one
        :db/doc "A git repo uri"
        :db/unique :db.unique/identity
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/refs
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/many
+       :db/doc "Associate repo with these git refs"
+       :db/unique :db.unique/value
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :ref/commit
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/one
+       :db/doc "Commit pointed to by git ref"
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :ref/label
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "Git ref label"
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
@@ -346,6 +368,105 @@
              (conj [:db/add committer-id :email/address committer]))]
     tx))
 
+(defn removed-refs
+  "Returns the set of refs that have been removed from the repo since the last
+   import."
+  ;; Removed refs have an entity in codeq, but no corresponding ref in the
+  ;; repository with identical :type and :label.
+  [db repo]
+  (let [repo-id (repo-id db repo)
+        codeq-refs (util/qmap '[:find ?type ?label ?e
+                                :in $ ?repo-id
+                                :where
+                                [?e :git/type ?type]
+                                [?e :ref/label ?label]
+                                [?repo-id :repo/refs ?e]]
+                              [:type :label :id] db repo-id)
+        repo-refs (repo/refs repo)]
+    (set/join codeq-refs
+              (set/difference
+                (set/project codeq-refs [:type :label])
+                (set/project repo-refs [:type :label])))))
+
+(defn unimported-refs
+  "Returns the set of refs which have been added or changed in the repository
+   since the last import (or all refs if first import)."
+  ;; Unimported refs are in the repository, but have no corresponding
+  ;; codeq ref with identical :type :label and :commit attributes
+  [db repo]
+  (let [repo-id (repo-id db repo)
+        codeq-refs (util/qmap '[:find ?type ?commit-sha ?label
+                                :in $ ?repo-id
+                                :where
+                                [?e :git/type ?type]
+                                [?e :ref/label ?label]
+                                [?e :ref/commit ?c]
+                                [?c :git/sha ?commit-sha]
+                                [?repo-id :repo/refs ?e]]
+                              [:type :commit :label] db repo-id)
+        repo-refs (repo/refs repo)]
+    (set/join repo-refs
+              (set/difference
+                (set/project repo-refs [:type :label :commit])
+                (set codeq-refs)))))
+
+(defn ref-tx-data
+  "Create transaction data for ref import."
+  ;; Possible scenarios:
+  ;; 1) New ref: Create ref entity, and add reference attribute from the repo to
+  ;;             the ref.
+  ;; 2) Updated ref: Update commit, but don't touch repo entity reference."
+  [db repo {:keys [type label commit]}]
+  (if-let [commit-id (ffirst (d/q '[:find ?e
+                                    :in $ ?sha
+                                    :where
+                                    [?tx :tx/op :import]
+                                    [?tx :tx/commit ?e]
+                                    [?e :git/sha ?sha]]
+                                  db commit))]
+    (let [uri (:uri (repo/info repo))
+          ref-id (or (ffirst (d/q '[:find ?ref
+                                    :in $ ?label ?type ?uri
+                                    :where
+                                    [?repo :repo/uri ?uri]
+                                    [?repo :repo/refs ?ref]
+                                    [?ref :git/type ?type]
+                                    [?ref :ref/label ?label]]
+                                  db label type uri))
+                     (d/tempid :db.part/user))
+          entity-tx {:db/id ref-id
+                     :ref/commit commit-id
+                     :ref/label label
+                     :git/type type}
+          reference-tx {:db/id (repo-id db repo) :repo/refs ref-id}]
+      (if (util/tempid? ref-id)
+        [entity-tx reference-tx]
+        [entity-tx]))
+    (throw (IllegalStateException.
+             (str "while importing ref: " label ", commit: " commit " has not been imported")))))
+
+(defn ref-retract-data
+  "Create transaction data for ref retraction."
+  [db repo ref] [[:db.fn/retractEntity (:id ref)]])
+
+(defn import-refs
+  "Import branches and tags into codeq."
+  [conn repo]
+  (let [db (d/db conn)
+        refs (repo/refs repo)
+        unimported (unimported-refs db repo)
+        removed (removed-refs db repo)]
+    (doseq [ref unimported]
+      (println "Importing" (name (:type ref)) (:label ref))
+      (->> ref
+           (ref-tx-data db repo)
+           (d/transact conn)))
+    (doseq [ref removed]
+      (println "Removing" (name (:type ref)) (:label ref))
+      (->> ref
+           (ref-retract-data db repo)
+           (d/transact conn)))))
+
 (defn unimported-commits
   "Returns the commit map of all unimported commits in the repository.
    Finds all commits that are reachable from a branch or tag."
@@ -447,10 +568,11 @@
             (d/transact conn tdata))))))
   (println "Analysis complete!"))
 
-(defn main [repo db-uri commit-id]
+(defn main [repo db-uri commit-id import-refs?]
   (let [conn (ensure-db db-uri)]
     (import-repository conn repo)
     (import-commits conn repo commit-id)
+    (when import-refs? (import-refs conn repo))
     (d/request-index conn)
     (run-analyzers conn repo)))
 
@@ -459,7 +581,8 @@
    ["-r" "--repo" "Repository URI. Local file path or Github clone URL."]
    ["-t" "--token" "Github OAuth token. Required for Github imports."]
    ["-d" "--datomic" "Datomic database URI." :default "datomic:free://localhost:4334/git"]
-   ["-c" "--commit" "Commit SHA, branch, or tag to import."]])
+   ["-c" "--commit" "Commit SHA, branch, or tag to import."]
+   ["--refs" "Import branches and tags into codeq." :flag true :default true]])
 
 (defn -main [& args]
   (let
@@ -470,7 +593,7 @@
               (local/local-repo (:repo opts))))]
     (if (and (not (:help opts))
              repo)
-      (main repo (:datomic opts) (:commit opts))
+      (main repo (:datomic opts) (:commit opts) (:refs opts))
       (println msg))
     (shutdown-agents)
     (System/exit 0)))
