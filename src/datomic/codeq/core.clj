@@ -95,6 +95,34 @@
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
+       :db/ident :repo/stars
+       :db/valueType :db.type/long
+       :db/cardinality :db.cardinality/one
+       :db/doc "Number of repository stars."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/forks
+       :db/valueType :db.type/long
+       :db/cardinality :db.cardinality/one
+       :db/doc "Number of repository forks."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/homepage
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "Repository homepage."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
+       :db/ident :repo/parent
+       :db/valueType :db.type/ref
+       :db/cardinality :db.cardinality/one
+       :db/doc "Parent repository."
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
        :db/ident :repo/refs
        :db/valueType :db.type/ref
        :db/cardinality :db.cardinality/many
@@ -506,8 +534,21 @@
   "Create transaction data for repository import. :repo/uri is a unique/identity
    attribute, so transaction will update existing repository entity if present."
   [db repo]
-  [{:db/id (d/tempid :db.part/user)
-    :repo/uri (:uri (repo/info repo))}])
+  (let [info (repo/info repo)
+        parent (:parent info)
+        parent-id (when parent
+                    (ffirst (d/q '[:find ?e
+                                   :in $ ?uri
+                                   :where [?e :repo/uri ?uri]]
+                                 db parent)))]
+    (do (assert (or (and parent parent-id)
+                    (not parent)) "Parent repository not imported.")
+        [(cond-> {:db/id (d/tempid :db.part/user)
+                  :repo/uri (:uri (repo/info repo))}
+                 (contains? info :stars) (assoc :repo/stars (:stars info))
+                 (contains? info :forks) (assoc :repo/forks (:forks info))
+                 (contains? info :homepage) (assoc :repo/homepage (:homepage info))
+                 parent-id (assoc :repo/parent parent-id))])))
 
 (defn import-repository
   [conn repo]

@@ -137,12 +137,12 @@
     (first (filter #(= label (:label %)) (remotes r))))
 
   (info [r]
-      (let [remotes (remotes r)
-            origin (first (filter (fn [remote]
-                                    (= (:label remote) "origin")) remotes))
-            ^String uri (:uri origin)
-            name (subs uri (inc (.lastIndexOf uri "/")))]
-        {:uri uri :name name})))
+    (let [origin (remote r "origin")
+          parent (remote r "upstream")
+          ^String uri (:uri origin)
+          name (subs uri (inc (.lastIndexOf uri "/")))]
+      (cond-> {:uri uri :name name}
+        parent (assoc :parent (:uri parent))))))
 
 (defn local-repo
   "Returns the Local repository on the path.  Returns nil if the path does
