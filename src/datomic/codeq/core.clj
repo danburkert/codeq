@@ -266,6 +266,13 @@
        :db.install/_attribute :db.part/db}
 
       {:db/id #db/id[:db.part/db]
+       :db/ident :code/highlight
+       :db/valueType :db.type/string
+       :db/cardinality :db.cardinality/one
+       :db/doc "The highlighted HTML source code for a code segment"
+       :db.install/_attribute :db.part/db}
+
+      {:db/id #db/id[:db.part/db]
        :db/ident :code/name
        :db/valueType :db.type/string
        :db/cardinality :db.cardinality/one
@@ -513,7 +520,7 @@
 (def analyzers [(datomic.codeq.analyzers.clj/impl)])
 
 (defn run-analyzers
-  [conn repo]
+  [conn repo {:keys [text highlight]}]
   (println "Analyzing...")
   (doseq [a analyzers]
     (let [aname (az/keyname a)
@@ -565,16 +572,19 @@
                                    :tx/file f
                                    :tx/analyzer aname
                                    :tx/analyzerRev arev})]
-            (d/transact conn tdata))))))
+            (cond->> tdata
+              highlight (util/highlight (subs (first exts) 1))
+              (not text) (util/strip-attribute :code/text)
+              true (d/transact conn)))))))
   (println "Analysis complete!"))
 
-(defn main [repo db-uri commit-id import-refs?]
-  (let [conn (ensure-db db-uri)]
+(defn main [repo {:keys [datomic commit refs] :as opts}]
+  (let [conn (ensure-db datomic)]
     (import-repository conn repo)
-    (import-commits conn repo commit-id)
-    (when import-refs? (import-refs conn repo))
+    (import-commits conn repo commit)
+    (when refs (import-refs conn repo))
     (d/request-index conn)
-    (run-analyzers conn repo)))
+    (run-analyzers conn repo opts)))
 
 (def ^{:private true} cli-menu
   [["-h" "--help" "Display this menu." :flag true :default false]
@@ -582,7 +592,9 @@
    ["-t" "--token" "Github OAuth token. Required for Github imports."]
    ["-d" "--datomic" "Datomic database URI." :default "datomic:free://localhost:4334/git"]
    ["-c" "--commit" "Commit SHA, branch, or tag to import."]
-   ["--refs" "Import branches and tags into codeq." :flag true :default true]])
+   ["--refs" "Import branches and tags into codeq." :flag true :default true]
+   ["--text" "Import text of codeqs." :flag true :default true]
+   ["--highlight" "Import highlighted codeq text." :flag true :default false]])
 
 (defn -main [& args]
   (let
@@ -593,7 +605,7 @@
               (local/local-repo (:repo opts))))]
     (if (and (not (:help opts))
              repo)
-      (main repo (:datomic opts) (:commit opts) (:refs opts))
+      (main repo opts)
       (println msg))
     (shutdown-agents)
     (System/exit 0)))
