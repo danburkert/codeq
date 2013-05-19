@@ -100,7 +100,9 @@
   [repo]
   (->> (refs repo)
        (map :commit)
-       (mapcat (partial commits repo))))
+       (distinct)
+       (mapcat (partial commits repo))
+       (distinct)))
 
 (defn commit-directory
   "Returns a tree representation of every node (tree and blob) in the

@@ -403,6 +403,13 @@
              (conj [:db/add committer-id :email/address committer]))]
     tx))
 
+(defn associate-commit-tx-data
+  "Create transaction data for associating the commit with the repository."
+  [db repo commit]
+  (let [repo-id (util/index-get-id db :repo/uri (:uri (repo/info repo)))
+        commit-id (util/index-get-id db :git/sha (:sha commit))]
+    [:db/add repo-id :repo/commits commit-id]))
+
 (defn removed-refs
   "Returns the set of refs that have been removed from the repo since the last
    import."
@@ -503,31 +510,50 @@
            (d/transact conn)))))
 
 (defn unimported-commits
-  "Returns the commit map of all unimported commits in the repository.
-   Finds all commits that are reachable from a branch or tag."
+  "Returns a pair of commit sequences.  The first is unimported commits in
+   commit order.  The second is commits in both codeq and the repository, but
+   who do not have the correct associations (meaning they were likely imported
+   from a fork of the repo)."
   [db repo commit-id]
-  (let [imported (set (map first (d/q '[:find ?sha
+  (let [codeq-cs (set (map first (d/q '[:find ?sha
                                         :where
                                         [?tx :tx/op :import]
                                         [?tx :tx/commit ?e]
                                         [?e :git/sha ?sha]]
                                       db)))
-        all (if commit-id
-              (repo/commits repo commit-id)
-              (repo/all-commits repo))
-        unimported (remove imported all)]
-    (pmap (partial repo/commit repo) unimported)))
+        associated-cs (set (map first (d/q '[:find ?sha
+                                             :in $ ?uri
+                                             :where
+                                             [?tx :tx/op :import]
+                                             [?tx :tx/commit ?commit]
+                                             [?repo :repo/uri ?uri]
+                                             [?repo :repo/commits ?commit]
+                                             [?commit :git/sha ?sha]]
+                                           db (:uri (repo/info repo)))))
+        repository-cs (if commit-id
+                        (repo/commits repo commit-id)
+                        (repo/all-commits repo))
+        unimported-cs (remove codeq-cs repository-cs)
+        unassociated-cs (remove associated-cs
+                                (keep codeq-cs repository-cs))]
+    [(pmap (partial repo/commit repo) unimported-cs)
+     (pmap (partial repo/commit repo) unassociated-cs)]))
 
 (defn import-commits
   "Imports commits from repository into database.  Only imports commits that are not
    already in codeq."
   [conn repo commit-id]
   (let [db (d/db conn)
-        commits (unimported-commits db repo commit-id)]
-    (doseq [commit commits]
+        [unimported unassociated] (unimported-commits db repo commit-id)]
+    (doseq [commit unimported]
       (let [db (d/db conn)]
         (println "Importing commit:" (:sha commit))
         (d/transact conn (commit-tx-data db repo commit))))
+    (d/transact conn
+                (map (fn [commit]
+                       (println "Associating commit:" (:sha commit))
+                       (associate-commit-tx-data db repo commit))
+                     unassociated))
     (println "Import complete!")))
 
 (defn repository-tx-data
